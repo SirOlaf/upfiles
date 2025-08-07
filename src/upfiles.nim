@@ -60,7 +60,7 @@ proc upfileUnescape*(x: UpfileStr): string =
 
 
 proc skipWhitespace*(p: var StrSlice) =
-  while p.p[0] in {' ', '\n'}:
+  while not p.atEof() and p.p[0] in {' ', '\n'}:
     inc p
 
 proc expectChar*(p: var StrSlice, c: char) =
