@@ -138,11 +138,14 @@ proc countUpfileEntities*(data: openArray[char]): int =
   for _ in data.iterUpfileEntities():
     inc result
 
+proc seekNthEntity*(p: var StrSlice, n: int) =
+  for i in 0 ..< n:
+    discard p.skipScope()
+
 proc takeNthEntityInUpfile*(data: openArray[char], n: int): StrSlice =
   doAssert data.len() > 0
   var p = data.toSlice()
-  for i in 0 ..< n:
-    discard p.skipScope()
+  p.seekNthEntity(n)
   p.skipScope()
 
 
