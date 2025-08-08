@@ -21,7 +21,8 @@ proc len*(x: StrSlice): int {.inline.} =
 
 proc `$`*(x: StrSlice): string =
   result = newString(x.len)
-  copyMem(addr result[0], x.p, x.len)
+  if x.len() > 0:
+    copyMem(addr result[0], x.p, x.len)
 
 proc inc*(x: var StrSlice) {.inline.} =
   x.p = cast[ptr UncheckedArray[char]](addr x.p[1])
@@ -35,6 +36,10 @@ proc toSlice*(buff: ptr UncheckedArray[char], len: int): StrSlice {.inline.} =
 
 proc toSlice*(buff: openArray[char]): StrSlice {.inline.} =
   toSlice(cast[ptr UncheckedArray[char]](addr buff[0]), buff.len())
+
+template withSlice*(buff: openArray[char], name: untyped, body: untyped): untyped =
+  var name = buff.toSlice()
+  body
 
 
 # TODO: Don't manually define escape sequences
@@ -128,10 +133,10 @@ template fieldLoop*(p: var StrSlice, fieldNameVar: untyped, body: untyped): unty
 
 iterator iterUpfileEntities*(data: openArray[char]): StrSlice =
   if data.len() > 0:
-    var p = data.toSlice()
-    while not p.atEof():
-      yield p.skipScope()
-      p.skipWhitespace()
+    data.withSlice(p):
+      while not p.atEof():
+        yield p.skipScope()
+        p.skipWhitespace()
 
 proc countUpfileEntities*(data: openArray[char]): int =
   result = 0
@@ -144,9 +149,9 @@ proc seekNthEntity*(p: var StrSlice, n: int) =
 
 proc takeNthEntityInUpfile*(data: openArray[char], n: int): StrSlice =
   doAssert data.len() > 0
-  var p = data.toSlice()
-  p.seekNthEntity(n)
-  p.skipScope()
+  data.withSlice(p):
+    p.seekNthEntity(n)
+    p.skipScope()
 
 
 type
