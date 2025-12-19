@@ -95,12 +95,6 @@ proc takeAnyNonTerm*(p: var StrSlice): StrSlice =
     inc p
   result.z = p.p
 
-proc takeInt*(p: var StrSlice): int {.inline.} =
-  parseInt($p.takeAnyNonTerm())
-
-proc takeString*(p: var StrSlice): string {.inline.} =
-  upfileUnescape(UpfileStr($p.takeAnyNonTerm()))
-
 proc takeScope*(p: var StrSlice): StrSlice =
   p.skipWhitespace()
   result = StrSlice(p : p.p)
@@ -188,9 +182,6 @@ proc writeRaw*(p: var UpfileWriter, x: string) =
     p.afterNewline = false
   p.buff.add(x)
 
-proc putStr*(p: var UpfileWriter, x: string) =
-  p.writeRaw upfileEscape(x).string
-
 proc newline*(p: var UpfileWriter, force: bool = false) =
   if p.pretty or force:
     p.writeRaw("\n")
@@ -228,26 +219,35 @@ template terminated*(p: var UpfileWriter, body: untyped): untyped =
   body
   p.terminator()
 
-proc taggedValue*(x: var UpfileWriter, tag, value: string) =
+proc taggedValue*(x: var UpfileWriter, tag, value: string) {.inline.} =
   x.writeRaw tag & "(" & value & ")"
 
-template taggedField*(x: var UpfileWriter, name: string, body: untyped): untyped =
+proc taggedStr*(x: var UpfileWriter, value: string) {.inline.} =
+  x.taggedValue("s", upfileEscape(value).string)
+
+proc taggedI32*(x: var UpfileWriter, value: int32) {.inline.} =
+  x.taggedValue("i32", $value)
+
+proc taggedI64*(x: var UpfileWriter, value: int64) {.inline.} =
+  x.taggedValue("i64", $value)
+
+template field*(x: var UpfileWriter, name: string, body: untyped): untyped =
   doAssert name.isValidGroupName(), "Names must not contain spaces: '" & name & "'"
   x.terminated:
     x.writeRaw name & " "
     body
 
 proc fieldStr*(x: var UpfileWriter, name, value: string) =
-  x.taggedField(name):
-    x.taggedValue("s", upfileEscape(value).string)
+  x.field(name):
+    x.taggedStr(value)
 
 proc fieldI32*(x: var UpfileWriter, name: string, value: int32) =
-  x.taggedField(name):
-    x.taggedValue("i32", $value)
+  x.field(name):
+    x.taggedI32(value)
 
 proc fieldI64*(x: var UpfileWriter, name: string, value: int64) =
-  x.taggedField(name):
-    x.taggedValue("i64", $value)
+  x.field(name):
+    x.taggedI64(value)
 
 
 when isMainModule:
