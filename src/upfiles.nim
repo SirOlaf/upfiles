@@ -6,7 +6,7 @@ import std/[
 
 
 const
-  TermChars* = {'(', ')', ';'} # must be escaped if used as part of a field
+  TermChars* = {'(', ')', ';'} # delimiters in the format (parentheses for values, semicolons for termination)
 
 type
   UpfileStr* = distinct string
@@ -42,24 +42,20 @@ template withSlice*(buff: openArray[char], name: untyped, body: untyped): untype
   body
 
 
-# TODO: Don't manually define escape sequences
+# Escape sequences: $p for '(', $b for ')', $n for newline, $d for '$'
 proc upfileEscape*(x: string): UpfileStr =
   x.multiReplace(
     ("$", "$d"),
-    (" ", "$s"),
     ("(", "$p"),
     (")", "$b"),
-    (";", "$c"),
     ("\n", "$n")
   ).UpfileStr
 
 proc upfileUnescape*(x: UpfileStr): string =
   x.string.multiReplace(
     ("$d", "$"),
-    ("$s", " "),
     ("$p", "("),
     ("$b", ")"),
-    ("$c", ";"),
     ("$n", "\n")
   )
 
@@ -105,7 +101,7 @@ proc takeInt*(p: var StrSlice): int {.inline.} =
 proc takeString*(p: var StrSlice): string {.inline.} =
   upfileUnescape(UpfileStr($p.takeAnyNonTerm()))
 
-proc skipScope*(p: var StrSlice): StrSlice =
+proc takeScope*(p: var StrSlice): StrSlice =
   p.skipWhitespace()
   result = StrSlice(p : p.p)
   p.withParens:
@@ -119,6 +115,30 @@ proc skipScope*(p: var StrSlice): StrSlice =
           break
       inc p
   result.z = p.p
+
+proc takeTaggedValueContent*(p: var StrSlice): StrSlice =
+  result = p.takeScope()
+  result.p = cast[ptr UncheckedArray[char]](cast[int](result.p) + 1)
+  result.z = cast[pointer](cast[int](result.z) - 1)
+
+proc takeTaggedValue*(p: var StrSlice, expectedTag: string): StrSlice =
+  p.skipWhitespace()
+  var tag = p.takeAsciiWord()
+  # Handle tags with digits like i32, i64
+  while not p.atEof() and p.p[0] in {'0'..'9'}:
+    inc p
+  tag.z = p.p
+  doAssert $tag == expectedTag, "Expected " & expectedTag & " tag, got '" & $tag & "'"
+  p.takeTaggedValueContent()
+
+proc takeTaggedString*(p: var StrSlice): string =
+  upfileUnescape(UpfileStr($p.takeTaggedValue("s")))
+
+proc takeTaggedI32*(p: var StrSlice): int32 =
+  parseInt($p.takeTaggedValue("i32")).int32
+
+proc takeTaggedI64*(p: var StrSlice): int64 =
+  parseInt($p.takeTaggedValue("i64")).int64
 
 template parenLoop*(p: var StrSlice, body: untyped): untyped =
   p.withParens:
@@ -135,7 +155,7 @@ iterator iterUpfileEntities*(data: openArray[char]): StrSlice =
   if data.len() > 0:
     data.withSlice(p):
       while not p.atEof():
-        yield p.skipScope()
+        yield p.takeScope()
         p.skipWhitespace()
 
 proc countUpfileEntities*(data: openArray[char]): int =
@@ -145,13 +165,13 @@ proc countUpfileEntities*(data: openArray[char]): int =
 
 proc seekNthEntity*(p: var StrSlice, n: int) =
   for i in 0 ..< n:
-    discard p.skipScope()
+    discard p.takeScope()
 
 proc takeNthEntityInUpfile*(data: openArray[char], n: int): StrSlice =
   doAssert data.len() > 0
   data.withSlice(p):
     p.seekNthEntity(n)
-    p.skipScope()
+    p.takeScope()
 
 
 type
@@ -208,10 +228,26 @@ template terminated*(p: var UpfileWriter, body: untyped): untyped =
   body
   p.terminator()
 
-proc field*(x: var UpfileWriter, name, value: string) =
-  x.terminated:
-    x.writeRaw upfileEscape(name).string & " " & upfileEscape(value).string
+proc taggedValue*(x: var UpfileWriter, tag, value: string) =
+  x.writeRaw tag & "(" & value & ")"
 
+template taggedField*(x: var UpfileWriter, name: string, body: untyped): untyped =
+  doAssert name.isValidGroupName(), "Names must not contain spaces: '" & name & "'"
+  x.terminated:
+    x.writeRaw name & " "
+    body
+
+proc fieldStr*(x: var UpfileWriter, name, value: string) =
+  x.taggedField(name):
+    x.taggedValue("s", upfileEscape(value).string)
+
+proc fieldI32*(x: var UpfileWriter, name: string, value: int32) =
+  x.taggedField(name):
+    x.taggedValue("i32", $value)
+
+proc fieldI64*(x: var UpfileWriter, name: string, value: int64) =
+  x.taggedField(name):
+    x.taggedValue("i64", $value)
 
 
 when isMainModule:
@@ -220,49 +256,12 @@ when isMainModule:
   ]
 
   var data = block:
-    template interval(x: var UpfileWriter, a, b: int, body: untyped): untyped =
-      x.writeRaw("i " & $a & "," & $b)
-      x.scope:
-        body
-
-    proc path(x: var UpfileWriter, p: string) =
-      x.terminated:
-        x.writeRaw("p ")
-        x.putStr(p)
-
-    proc smallFile(x: var UpfileWriter, p: string) =
-      x.writeRaw("s ")
-      x.path(p)
-
-    proc bigFile(x: var UpfileWriter, p: string) =
-      x.writeRaw("b ")
-      x.path(p)
-
-    template gapFile(x: var UpfileWriter, idx: int, body: untyped): untyped =
-      x.writeRaw("g ")
-      x.writeRaw($idx & " ")
-      body
-
-    proc emptyFile(x: var UpfileWriter, p: string) =
-      x.writeRaw("e ")
-      x.path(p)
-
     var x = UpfileWriter(buff : newString(0), pretty : false)
     x.entity:
-      x.group("files"):
-        x.interval(0, 3):
-          x.smallFile "some/relative/path"
-          x.smallFile "some/path with spaces.txt"
-          x.smallFile "a/pathwithdollars$andsemicolons;.txt"
-          x.bigFile "some/other/path"
-        x.gapFile(12, x.smallFile "small/file/in/a/gap.txt")
-        x.gapFile(15, x.bigFile "big/file/in/a/gap.txt")
-        x.emptyFile("empty/file.txt")
-      x.group("emptydirs"):
-        x.path "empty/dir/1"
-        x.path "empty/dir/2"
+      x.group("test"):
+        x.fieldI32("number", 10)
+        x.fieldStr("string", "some (text) $ for testing;")
     x.buff
-
   while data.len() < 1_000_000_000:
     data &= data
 
