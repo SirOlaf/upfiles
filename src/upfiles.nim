@@ -20,9 +20,10 @@ proc len*(x: StrSlice): int {.inline.} =
   cast[int](x.z) - cast[int](x.p)
 
 proc `$`*(x: StrSlice): string =
-  result = newString(x.len)
-  if x.len() > 0:
-    copyMem(addr result[0], x.p, x.len)
+  let length = x.len
+  if length > 0:
+    copyMem(beginStore(result, length), x.p, length)
+    endStore(result)
 
 proc inc*(x: var StrSlice) {.inline.} =
   x.p = cast[ptr UncheckedArray[char]](addr x.p[1])
